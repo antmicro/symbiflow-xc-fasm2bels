@@ -108,6 +108,44 @@ def process_bufg(conn, top, tile, features):
         top.add_site(site)
 
 
+def cleanup_hrow(top, site):
+    """
+    Cleans-up BUFHCE if one is configured as pass-throu
+    """
+
+    # Check if we have a BUFHCE
+    bel = site.maybe_get_bel("BUFHCE")
+    if bel is not None:
+
+        # Get source for CE
+        source = top.find_source_from_sink(site, 'CE')
+        # Get CE inversion
+        inv_ce = bel.parameters['IS_CE_INVERTED']
+
+        # Determine if the BUFHCE is permanently enabled
+        if source in [0, 1] and (source ^ inv_ce) == 1:
+
+            # Prune site routing
+            site.prune_site_routing(('site_pin', 'I'))
+            site.prune_site_routing(('site_pin', 'CE'))
+            site.prune_site_routing(('bel_pin', 'BUFHCE', 'O', 'output'))
+
+            # Remove the BUFHCE source. This is needed as the bel cannot be
+            # removed when connected to the source (clearing bel.connections
+            # doesn't solve that).
+            del site.sources['O']
+
+            # Remove the BUFHCE bel connection and the bel itself
+            bel.connections = {}
+            top.remove_bel(site, bel)
+
+            # Link site input and output
+            site.link_site_routing([
+                ('site_pin', 'I'),
+                ('site_pin', 'O'),
+            ])
+
+
 def process_hrow(conn, top, tile, features):
     bufhs = {}
     for f in features:
@@ -153,6 +191,7 @@ def process_hrow(conn, top, tile, features):
 
         site.add_source(bel, 'O', 'O', bel.bel, 'O')
 
-        site.add_bel(bel)
+        site.add_bel(bel, name="BUFHCE")
 
+        site.set_post_route_cleanup_function(cleanup_hrow)
         top.add_site(site)
