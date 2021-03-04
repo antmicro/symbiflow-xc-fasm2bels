@@ -1,6 +1,7 @@
 import re
 
-from .verilog_modeling import Bel, Site, make_inverter_path
+from .verilog_modeling import Bel, Site, make_site_pin_map, make_inverter_path
+from fasm2bels.make_routes import make_routes
 
 BUFHCE_RE = re.compile('BUFHCE_X([0-9]+)Y([0-9]+)')
 
@@ -139,11 +140,81 @@ def cleanup_hrow(top, site):
             bel.connections = {}
             top.remove_bel(site, bel)
 
+            del site.sinks['I']
+
             # Link site input and output
             site.link_site_routing([
                 ('site_pin', 'I'),
                 ('site_pin', 'O'),
             ])
+
+            # Get wire pkeys
+            bufhce_i_wire_pkey = site.site_wire_to_wire_pkey['I']
+            bufhce_o_wire_pkey = site.site_wire_to_wire_pkey['O']
+
+            # Identify all sinks driven by the BUFHCE, store their wire pkeys
+            clk_sinks = []
+            bufhce_o_net = top.nets[bufhce_o_wire_pkey]
+            for wire_pkey in bufhce_o_net.route_wire_pkeys:
+                if wire_pkey not in top.nets:
+
+                    if wire_pkey not in top.wire_pkey_to_wire:
+                        continue
+
+                    wire = top.wire_pkey_to_wire[wire_pkey]
+                    if wire in top.wires:
+                        clk_sinks.append(wire_pkey)
+
+            # Identify the clock source that drives the BUFHCE, store its pkey
+            for net_src_pkey, net in top.nets.items():
+                if bufhce_i_wire_pkey in net.route_wire_pkeys:
+                    bufhce_i_net = net
+                    break
+            else:
+                assert False, bufhce_i_wire_pkey
+            clk_source = bufhce_i_net.source_wire_pkey
+
+            # Identify the pip that bypasses the BUFHCE
+            site_pin_map = make_site_pin_map(frozenset(site.site.site_pins))
+            pip = "{}.{}.{}".format(
+                site.tile,
+                site_pin_map['O'],
+                site_pin_map['I'],
+            )
+
+            # Do not add the PIP to the active PIPs. Make a short between
+            # BUFHCE input and output using the PIP instead.
+            shorted_nets = {}
+            shorted_nets[bufhce_o_wire_pkey] = bufhce_i_wire_pkey, pip
+
+            # Delete old nets
+            del top.nets[bufhce_o_net.source_wire_pkey]
+            del top.nets[bufhce_i_net.source_wire_pkey]
+
+            # Re-route the clock signal having the BUFHCE shorted. This will
+            # create new net(s)
+            nets = {}
+            net_map = {}
+
+            for sink_wire, src_wire in make_routes(
+                    db=top.db,
+                    conn=top.conn,
+                    wire_pkey_to_wire=top.wire_pkey_to_wire,
+                    unrouted_sinks=clk_sinks,
+                    unrouted_sources=[clk_source],
+                    active_pips=top.active_pips,
+                    allow_orphan_sinks=False,
+                    shorted_nets=shorted_nets,
+                    nets=nets,
+                    net_map=net_map,
+            ):
+                top.wire_assigns.remove_sink(sink_wire)
+                top.wire_assigns.add_wire(
+                    sink_wire=sink_wire, src_wire=src_wire)
+
+            # Merge new nets and net_map
+            top.nets.update(nets)
+            top.net_map.update(net_map)
 
 
 def process_hrow(conn, top, tile, features):
