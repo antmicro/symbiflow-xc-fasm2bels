@@ -44,6 +44,7 @@ from .models.iob_models import process_iobs
 from .models.ioi_models import process_ioi
 from .models.hclk_ioi3_models import process_hclk_ioi3
 from .models.pss_models import get_ps7_site, insert_ps7
+from .models.pcie_models import process_pcie
 
 from .database.create_channels import create_channels
 from .database.connection_db_utils import get_tile_type
@@ -97,6 +98,7 @@ PROCESS_TILE = {
     'CMT_TOP_R_LOWER_B': process_cmt_lower_b,
     'CMT_TOP_L_LOWER_B': process_cmt_lower_b,
     'CFG_CENTER_MID': null_process,
+    'PCIE_BOT': process_pcie,
 }
 
 
